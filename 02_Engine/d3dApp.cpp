@@ -4,13 +4,10 @@
 
 #include "d3dApp.h"
 #include <WindowsX.h>
-#include "../03_Editor/IMGUI/imgui.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace std;
 using namespace DirectX;
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 LRESULT CALLBACK
 MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -247,7 +244,7 @@ void D3DApp::OnResize()
 LRESULT D3DApp::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	// ImGui가 Win32 메시지를 먼저 처리
-	if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+	if (mWndProcHandlerFunc(hwnd, msg, wParam, lParam))
 		return 0;
 
 	switch (msg)

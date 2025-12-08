@@ -6,6 +6,8 @@
 #include "../02_Engine/FrameResource.h"
 #include "../02_Engine/Camera.h"
 
+#include "IMGUI/imgui_impl_win32.h"
+
 #include "EditorUI.h"
 
 using Microsoft::WRL::ComPtr;           // 
@@ -58,11 +60,11 @@ private:
     virtual void OnMouseDown(WPARAM btnState, int x, int y)override;    // 마우스 클릭 시
     virtual void OnMouseUp(WPARAM btnState, int x, int y)override;      // 마우스 클릭 종료 시
     virtual void OnMouseMove(WPARAM btnState, int x, int y)override;    // 마우스 이동 시
-    void PickItem(int x, int y);
 
     void OnKeyboardInput(const GameTimer& gt);  // 
     void UpdateObjectCBs(const GameTimer& gt);  // 
     void UpdateMainPassCB(const GameTimer& gt); // 
+    void UpdateMainPassCB2(const GameTimer& gt); // 
 
     void BuildDescriptorHeaps();        // 
     void BuildConstantBufferViews();    // 
@@ -73,15 +75,19 @@ private:
     void BuildFrameResources();         // 
     void BuildRenderItems();            // 
     void SceneHeapsInit();              // Scene Heap 설정
+    void GameHeapsInit();               // Game Heap 설정
 
     void DrawSceneView();   // Scene뷰 생성
+    void DrawGameView();    // Game뷰 생성
     void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);   // 
 
 public:
-    // 프로퍼티
+    // Get 프로퍼티
     ID3D12DescriptorHeap* GetSceneSRVHeap() { return mSceneSRVHeap.Get(); }
+    ID3D12DescriptorHeap* GetGameSRVHeap() { return mGameSRVHeap.Get(); }
     std::vector<std::unique_ptr<RenderItem>>& GetAllRItems() {return mAllRitems;}
 
+    // Set 프로퍼티
     void SetIsWireFrame(bool IsWireFrame) { mIsWireframe = IsWireFrame; }
 
 private:
@@ -108,7 +114,7 @@ private:
 
     UINT mPassCbvOffset = 0;    // 
 
-    bool mIsWireframe = false;  // WireFrame모드 여부
+    bool mIsWireframe = true;  // WireFrame모드 여부
 
     // 마우스 클릭 했는지 여부
     bool IsMouseDown = false;
@@ -122,11 +128,18 @@ private:
     EditorUI mEditorUI;
 
     // 카메라
-    Camera mSceneCamera;
+    Camera mSceneCamera;    // Scene뷰 카메라
+    Camera mGameCamera;     // Game뷰 카메라
 
     // Scene뷰 관련 변수
     ComPtr<ID3D12Resource> mSceneTexture;       // 카메라 시점을 담을 텍스처
     ComPtr<ID3D12DescriptorHeap> mSceneSRVHeap; // ImGui용 SRV Heap
-    ComPtr<ID3D12DescriptorHeap> mRtvHeap;      // ImGui용 RTV Heap
+    ComPtr<ID3D12DescriptorHeap> mSceneRtvHeap; // ImGui용 RTV Heap
     D3D12_CPU_DESCRIPTOR_HANDLE mSceneRTV;      // mSceneTexture 용 RTV
+
+    // Game뷰 관련 변수
+    ComPtr<ID3D12Resource> mGameTexture;        // 카메라 시점을 담을 텍스처
+    ComPtr<ID3D12DescriptorHeap> mGameSRVHeap;  // ImGui용 SRV Heap
+    ComPtr<ID3D12DescriptorHeap> mGameRtvHeap;  // ImGui용 RTV Heap
+    D3D12_CPU_DESCRIPTOR_HANDLE mGameRTV;       // mSceneTexture 용 RTV
 };

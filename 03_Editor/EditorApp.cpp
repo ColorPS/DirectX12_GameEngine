@@ -1,8 +1,8 @@
 #include "EditorApp.h"
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 const int gNumFrameResources = 3;
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 	PSTR cmdLine, int showCmd)
@@ -40,6 +40,7 @@ EditorApp::~EditorApp()
 bool EditorApp::Initialize()
 {
 	ImGui_ImplWin32_EnableDpiAwareness();
+	mWndProcHandlerFunc = ImGui_ImplWin32_WndProcHandler;
 
 	if (!D3DApp::Initialize())
 		return false;
@@ -50,6 +51,9 @@ bool EditorApp::Initialize()
 	mSceneCamera.SetPosition(0.0f, 2.0f, -15.0f);
 	mSceneCamera.UpdateViewMatrix();
 
+	mGameCamera.SetPosition(0.0f, 2.0f, -15.0f);
+	mGameCamera.UpdateViewMatrix();
+
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
@@ -58,7 +62,8 @@ bool EditorApp::Initialize()
 	BuildDescriptorHeaps();
 	BuildConstantBufferViews();
 	BuildPSOs();
-	SceneHeapsInit();
+	SceneHeapsInit();				// Scene Heap 설정
+	GameHeapsInit();				// Game Heap 설정
 
 	// 2) ImGui + Texture용 SRV Heap 만들기
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
@@ -115,6 +120,7 @@ void EditorApp::OnResize()
 	D3DApp::OnResize();
 
 	mSceneCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	mGameCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
 	
 	// 창 크기가 바뀔때마다 Scene Heap 다시 설정해주기
 	SceneHeapsInit();	
@@ -137,28 +143,31 @@ void EditorApp::Update(const GameTimer& gt)
 
 	UpdateObjectCBs(gt);
 	UpdateMainPassCB(gt);
+	UpdateMainPassCB2(gt);
 }
 
 void EditorApp::Draw(const GameTimer& gt)
 {
 	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 
+	// 커맨드 리스트 Reset (한 번만)
 	ThrowIfFailed(cmdListAlloc->Reset());
+	ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), nullptr));
 
-	if (mIsWireframe)
-	{
-		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get()));
-	}
-	else
-	{
-		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
-	}
-
+	// Viewport/Scissor 설정
 	mCommandList->RSSetViewports(1, &mScreenViewport);
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-	// Scene뷰 생성
+	// Scene View 설정 및 그리기
+	if (mIsWireframe)
+		mCommandList->SetPipelineState(mPSOs["opaque_wireframe"].Get());
+	else
+		mCommandList->SetPipelineState(mPSOs["opaque"].Get());
 	DrawSceneView();
+
+	// Game View 설정 및 그리기
+	mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+	DrawGameView();
 
 	CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
 		CurrentBackBuffer(),
@@ -184,8 +193,6 @@ void EditorApp::Draw(const GameTimer& gt)
 	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
 	passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
-
-	//DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
 	barrier = CD3DX12_RESOURCE_BARRIER::Transition(
 		CurrentBackBuffer(),
@@ -247,10 +254,9 @@ void EditorApp::OnMouseMove(WPARAM btnState, int x, int y)
 	// 우클릭을 하고 있는 경우
 	if ((btnState & MK_RBUTTON) != 0)
 	{
-		// Make each pixel correspond to a quarter of a degree.
 		float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
 		float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
-
+		
 		mSceneCamera.Pitch(dy);
 		mSceneCamera.RotateY(dx);
 	}
@@ -258,44 +264,6 @@ void EditorApp::OnMouseMove(WPARAM btnState, int x, int y)
 	mLastMousePos.x = x;
 	mLastMousePos.y = y;
 }
-
-//void EditorApp::PickItem(int x, int y)
-//{
-//	// 1. Ray 생성
-//	float px = ((2.0f * x) / mClientWidth - 1.0f);
-//	float py = -((2.0f * y) / mClientHeight - 1.0f);
-//
-//	XMVECTOR rayClip = XMVectorSet(px, py, 0.0f, 1.0f);
-//	XMMATRIX invProj = XMLoadFloat4x4(&mMainPassCB.InvProj);
-//	XMVECTOR rayEye = XMVector3TransformCoord(rayClip, invProj);
-//	rayEye = XMVectorSetZ(rayEye, 1.0f);
-//	XMMATRIX invView = XMLoadFloat4x4(&mMainPassCB.InvView);
-//	XMVECTOR rayDir = XMVector3Normalize(XMVector3TransformNormal(rayEye, invView));
-//	XMVECTOR rayOrigin = XMLoadFloat3(&mSceneCamera.GetPosition3f());
-//
-//	// 2. 모든 RenderItem 검사
-//	RenderItem* hitItem = nullptr;
-//	float closestT = FLT_MAX;
-//
-//	for (auto& ri : mOpaqueRitems)
-//	{
-//		XMVECTOR boxMin = XMLoadFloat3(&ri->BoundingBoxMin);
-//		XMVECTOR boxMax = XMLoadFloat3(&ri->BoundingBoxMax);
-//
-//		float t;
-//		if (RayIntersectsAABB(rayOrigin, rayDir, boxMin, boxMax, t))
-//		{
-//			if (t < closestT)
-//			{
-//				closestT = t;
-//				hitItem = ri;
-//			}
-//		}
-//	}
-//
-//	if (hitItem)
-//		SelectRenderItem(hitItem); // 선택 처리
-//}
 
 void EditorApp::OnKeyboardInput(const GameTimer& gt)
 {
@@ -343,13 +311,15 @@ void EditorApp::UpdateObjectCBs(const GameTimer& gt)
 	}
 }
 
+// 프레임마다 공용데이터 업데이트
 void EditorApp::UpdateMainPassCB(const GameTimer& gt)
 {
-	XMMATRIX view = mSceneCamera.GetView();
-	XMMATRIX proj = mSceneCamera.GetProj();
+	// 카메라 View/Projection 행렬 계산
+	XMMATRIX view = mSceneCamera.GetView();				// 카메라가 월드 공간을 어떻게 바라보는지
+	XMMATRIX proj = mSceneCamera.GetProj();				// 원근 투영 정보(FOV, Near/Far 등)
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);	// 화면에 뿌릴 때 필요한 최종 행렬
 
-	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
-
+	// 역행렬 계산
 	XMVECTOR detView = XMMatrixDeterminant(view);
 	XMMATRIX invView = XMMatrixInverse(&detView, view);
 
@@ -359,29 +329,80 @@ void EditorApp::UpdateMainPassCB(const GameTimer& gt)
 	XMVECTOR detViewProj = XMMatrixDeterminant(viewProj);
 	XMMATRIX invViewProj = XMMatrixInverse(&detViewProj, viewProj);
 
+	// mMainPassCB에 저장
 	XMStoreFloat4x4(&mMainPassCB.View, XMMatrixTranspose(view));
 	XMStoreFloat4x4(&mMainPassCB.InvView, XMMatrixTranspose(invView));
 	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+
+	// 카메라 Position 저장
 	mMainPassCB.EyePosW = mSceneCamera.GetPosition3f();;
+
+	// 화면 크기 관련 정보 저장
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
 	mMainPassCB.FarZ = 1000.0f;
+
+	// 게임 시간 저장
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 
+	// GPU 버퍼(PassDB)에 저장 (슬롯 0번에 저장)
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
+}
+
+void EditorApp::UpdateMainPassCB2(const GameTimer& gt)
+{
+	// 카메라 View/Projection 행렬 계산
+	XMMATRIX view = mGameCamera.GetView();				// 카메라가 월드 공간을 어떻게 바라보는지
+	XMMATRIX proj = mGameCamera.GetProj();				// 원근 투영 정보(FOV, Near/Far 등)
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);	// 화면에 뿌릴 때 필요한 최종 행렬
+
+	// 역행렬 계산
+	XMVECTOR detView = XMMatrixDeterminant(view);
+	XMMATRIX invView = XMMatrixInverse(&detView, view);
+
+	XMVECTOR detProj = XMMatrixDeterminant(proj);
+	XMMATRIX invProj = XMMatrixInverse(&detProj, proj);
+
+	XMVECTOR detViewProj = XMMatrixDeterminant(viewProj);
+	XMMATRIX invViewProj = XMMatrixInverse(&detViewProj, viewProj);
+
+	// mMainPassCB에 저장
+	XMStoreFloat4x4(&mMainPassCB.View, XMMatrixTranspose(view));
+	XMStoreFloat4x4(&mMainPassCB.InvView, XMMatrixTranspose(invView));
+	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
+	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
+	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+
+	// 카메라 Position 저장
+	mMainPassCB.EyePosW = mGameCamera.GetPosition3f();;
+
+	// 화면 크기 관련 정보 저장
+	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
+	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
+	mMainPassCB.NearZ = 1.0f;
+	mMainPassCB.FarZ = 1000.0f;
+
+	// 게임 시간 저장
+	mMainPassCB.TotalTime = gt.TotalTime();
+	mMainPassCB.DeltaTime = gt.DeltaTime();
+
+	// GPU 버퍼(PassDB)에 저장 (슬롯 1번에 저장)
+	auto currPassCB = mCurrFrameResource->PassCB.get();
+	currPassCB->CopyData(1, mMainPassCB);
 }
 
 void EditorApp::BuildDescriptorHeaps()
 {
 	UINT objCount = (UINT)mOpaqueRitems.size();
 
-	UINT numDescriptors = (objCount + 1) * gNumFrameResources;
+	UINT numDescriptors = (objCount + 2) * gNumFrameResources;
 
 	mPassCbvOffset = objCount * gNumFrameResources;
 
@@ -428,15 +449,20 @@ void EditorApp::BuildConstantBufferViews()
 		auto passCB = mFrameResources[frameIndex]->PassCB->Resource();
 		D3D12_GPU_VIRTUAL_ADDRESS cbAddress = passCB->GetGPUVirtualAddress();
 
-		int heapIndex = mPassCbvOffset + frameIndex;
-		auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-		handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
+		// FrameResource 안에 Pass CB가 2개씩 있다고 가정
+		for (int passIndex = 0; passIndex < 2; ++passIndex)
+		{
+			auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
 
-		D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-		cbvDesc.BufferLocation = cbAddress;
-		cbvDesc.SizeInBytes = passCBByteSize;
+			int heapIndex = mPassCbvOffset + frameIndex * 2 + passIndex;
+			handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
 
-		md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
+			D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+			cbvDesc.BufferLocation = cbAddress + passIndex * passCBByteSize;
+			cbvDesc.SizeInBytes = passCBByteSize;
+
+			md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
+		}
 	}
 }
 
@@ -634,7 +660,7 @@ void EditorApp::BuildFrameResources()
 	for (int i = 0; i < gNumFrameResources; ++i)
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(),
-			1, (UINT)mAllRitems.size()));
+			2, (UINT)mAllRitems.size()));
 	}
 }
 
@@ -676,7 +702,7 @@ void EditorApp::BuildRenderItems()
 		XMMATRIX leftSphereWorld = XMMatrixTranslation(-5.0f, 3.5f, -10.0f + i * 5.0f);
 		XMMATRIX rightSphereWorld = XMMatrixTranslation(+5.0f, 3.5f, -10.0f + i * 5.0f);
 
-		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
+		XMStoreFloat4x4(&leftCylRitem->World, leftCylWorld);
 		leftCylRitem->Name = "LeftCylinder" + std::to_string(i);
 		leftCylRitem->ObjCBIndex = objCBIndex++;
 		leftCylRitem->Geo = mGeometries["shapeGeo"].get();
@@ -685,7 +711,7 @@ void EditorApp::BuildRenderItems()
 		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
 		leftCylRitem->BaseVertexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
 
-		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
+		XMStoreFloat4x4(&rightCylRitem->World, rightCylWorld);
 		rightCylRitem->Name = "RightCylinder" + std::to_string(i);
 		rightCylRitem->ObjCBIndex = objCBIndex++;
 		rightCylRitem->Geo = mGeometries["shapeGeo"].get();
@@ -760,9 +786,9 @@ void EditorApp::SceneHeapsInit()
 	rtvHeapDesc.NumDescriptors = 1;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mRtvHeap)));
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mSceneRtvHeap)));
 
-	mSceneRTV = mRtvHeap->GetCPUDescriptorHandleForHeapStart();
+	mSceneRTV = mSceneRtvHeap->GetCPUDescriptorHandleForHeapStart();
 	md3dDevice->CreateRenderTargetView(mSceneTexture.Get(), nullptr, mSceneRTV);
 
 	// ImGui용 SRV Heap
@@ -780,6 +806,66 @@ void EditorApp::SceneHeapsInit()
 	srvDesc.Texture2D.MipLevels = 1;
 
 	md3dDevice->CreateShaderResourceView(mSceneTexture.Get(), &srvDesc, mSceneSRVHeap->GetCPUDescriptorHandleForHeapStart());
+}
+
+// Game Heap 설정
+void EditorApp::GameHeapsInit()
+{
+	// 텍스처 생성
+	D3D12_RESOURCE_DESC texDesc = {};
+	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	texDesc.Width = mClientWidth;
+	texDesc.Height = mClientHeight;
+	texDesc.DepthOrArraySize = 1;
+	texDesc.MipLevels = 1;
+	texDesc.Format = mBackBufferFormat;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+	D3D12_CLEAR_VALUE clearValue = {};
+	clearValue.Format = texDesc.Format;
+	clearValue.Color[0] = 0.0f;
+	clearValue.Color[1] = 0.0f;
+	clearValue.Color[2] = 0.0f;
+	clearValue.Color[3] = 1.0f;
+
+	CD3DX12_HEAP_PROPERTIES HeapProp(D3D12_HEAP_TYPE_DEFAULT);
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&HeapProp,
+		D3D12_HEAP_FLAG_NONE,
+		&texDesc,
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		&clearValue,
+		IID_PPV_ARGS(&mGameTexture)
+	));
+
+	// RTV 생성
+	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+	rtvHeapDesc.NumDescriptors = 1;
+	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mGameRtvHeap)));
+
+	mGameRTV = mGameRtvHeap->GetCPUDescriptorHandleForHeapStart();
+	md3dDevice->CreateRenderTargetView(mGameTexture.Get(), nullptr, mGameRTV);
+
+	// ImGui용 SRV Heap
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.NumDescriptors = 1;
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mGameSRVHeap)));
+
+	// SRV 생성
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+
+	md3dDevice->CreateShaderResourceView(mGameTexture.Get(), &srvDesc, mGameSRVHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
 // Scene뷰 생성
@@ -803,7 +889,7 @@ void EditorApp::DrawSceneView()
 	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
-	int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex;
+	int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex * 2;
 	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
 	passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
@@ -813,6 +899,42 @@ void EditorApp::DrawSceneView()
 	// RTV → SRV 상태 전환
 	barrier = CD3DX12_RESOURCE_BARRIER::Transition(
 		mSceneTexture.Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+	);
+	mCommandList->ResourceBarrier(1, &barrier);
+}
+
+void EditorApp::DrawGameView()
+{
+	CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		mGameTexture.Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_RENDER_TARGET
+	);
+	mCommandList->ResourceBarrier(1, &barrier);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE DepthSV = DepthStencilView();
+	mCommandList->OMSetRenderTargets(1, &mGameRTV, true, &DepthSV);
+	mCommandList->ClearRenderTargetView(mGameRTV, Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearDepthStencilView(DepthStencilView(),
+		D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+	// 렌더링
+	ID3D12DescriptorHeap* descriptorHeaps[] = { mCbvHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+	int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex * 2 + 1;
+	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
+	passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+
+	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+	// RTV → SRV 상태 전환
+	barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		mGameTexture.Get(),
 		D3D12_RESOURCE_STATE_RENDER_TARGET,
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
 	);

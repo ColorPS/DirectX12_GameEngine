@@ -69,7 +69,7 @@ void EditorUI::Draw(ID3D12GraphicsCommandList* commandList)
 
     // 개별 창들 그리기
     SceneViewDraw(commandList); // Scene뷰
-    GameViewDraw();             // Game뷰
+    GameViewDraw(commandList);  // Game뷰
     HierarchyViewDraw();        // Hierarchy뷰
     InspectorViewDraw();        // Inspector뷰
     ProjectViewDraw();          // Project뷰
@@ -202,7 +202,7 @@ void EditorUI::SceneViewDraw(ID3D12GraphicsCommandList* commandList)
     ImGui::End();
 }
 
-void EditorUI::GameViewDraw()
+void EditorUI::GameViewDraw(ID3D12GraphicsCommandList* commandList)
 {
     // Game뷰 시작
     ImGui::Begin("Game");
@@ -211,6 +211,26 @@ void EditorUI::GameViewDraw()
     SetFocusTab();
 
     // Game뷰 화면 보여주기
+    // GPU Descriptor Heap 바인딩
+    ID3D12DescriptorHeap* SrvHeap = mEditorApp->GetGameSRVHeap();
+    commandList->SetDescriptorHeaps(1, &SrvHeap);
+
+    // 화면 비율 유지해서 이미지 크기 설정
+    ImVec2 ImageSize = ImGui::GetContentRegionAvail();
+    float AspectRatio = 16.0f / 9.0f;
+    if (ImageSize.x / ImageSize.y > AspectRatio)
+    {
+        // 가로가 너무 길면 세로 기준으로 조정
+        ImageSize.x = ImageSize.y * AspectRatio;
+    }
+    else
+    {
+        // 세로가 너무 길면 가로 기준으로 조정
+        ImageSize.y = ImageSize.x / AspectRatio;
+    }
+
+    // ImGui에 텍스처 출력
+    ImGui::Image((ImTextureID)SrvHeap->GetGPUDescriptorHandleForHeapStart().ptr, ImageSize);
 
     // Game뷰 끝
     ImGui::End();

@@ -86,7 +86,7 @@ private:
 
     // 모든 탭 그리기
     void SceneViewDraw(ID3D12GraphicsCommandList* commandList);
-    void GameViewDraw();
+    void GameViewDraw(ID3D12GraphicsCommandList* commandList);
     void HierarchyViewDraw();
     void InspectorViewDraw();
     void ProjectViewDraw();

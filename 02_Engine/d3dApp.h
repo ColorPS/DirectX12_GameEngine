@@ -17,7 +17,8 @@
 #pragma comment(lib, "D3D12.lib")
 #pragma comment(lib, "dxgi.lib")
 
-typedef bool(*MsgCallbackFn)(HWND, UINT, WPARAM, LPARAM);
+using MsgCallbackFn = bool(*)(HWND, UINT, WPARAM, LPARAM);
+using WndProcHandlerFunc = LRESULT(*)(HWND, UINT, WPARAM, LPARAM);
 
 class D3DApp
 {
@@ -124,5 +125,7 @@ protected:
     DXGI_FORMAT mDepthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
     int mClientWidth = 1400;
     int mClientHeight = 800;
+
+    WndProcHandlerFunc mWndProcHandlerFunc = nullptr;
 };
 
